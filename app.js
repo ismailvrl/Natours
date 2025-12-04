@@ -2,7 +2,7 @@ const express = require('express');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
-const mongoSanitize = require('express-mongo-sanitize');
+const sanitize = require('mongo-sanitize');
 const xss = require('xss-clean');
 const hpp = require('hpp');
 
@@ -10,6 +10,7 @@ const AppError = require('./utils/appError');
 const globalErrorHandler = require('./controllers/errorController');
 const tourRouter = require('./routes/tourRoutes');
 const userRouter = require('./routes/userRoutes');
+const reviewRouter = require('./routes/reviewRoutes');
 
 const app = express();
 
@@ -38,10 +39,28 @@ app.use('/api', limiter);
 app.use(express.json({ limit: '10kb' }));
 
 // Data sanitization against NoSQL query injection
-app.use(mongoSanitize());
-
 // Data sanitization against XSS
-app.use(xss());
+
+function cleanObject(obj) {
+  const cleaned = {};
+  for (let key in obj) {
+    if (typeof obj[key] === 'string') {
+      cleaned[key] = xss(mongoSanitize(obj[key]));
+    } else if (typeof obj[key] === 'object' && obj[key] !== null) {
+      cleaned[key] = cleanObject(obj[key]);
+    } else {
+      cleaned[key] = obj[key];
+    }
+  }
+  return cleaned;
+}
+
+module.exports = (req, res, next) => {
+  req.body = cleanObject(req.body);
+  req.params = cleanObject(req.params);
+  req.query = cleanObject(req.query); // Yeni obje oluşturuyoruz → Express 5 uyumlu
+  next();
+};
 
 // Prevent parameter pollution
 app.use(
@@ -70,6 +89,7 @@ app.use((req, res, next) => {
 
 app.use('/api/v1/tours', tourRouter);
 app.use('/api/v1/users', userRouter);
+app.use('/api/v1/reviews', reviewRouter);
 
 app.all(/.*/, (req, res, next) => {
   next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404));
